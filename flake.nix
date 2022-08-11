@@ -29,6 +29,9 @@
     cardano-prelude.url = "github:input-output-hk/cardano-prelude/bb4ed71ba8e587f672d06edf9d2e376f4b055555";
     cardano-prelude.flake = false;
 
+    goblins.url = "github:input-output-hk/goblins/cde90a2b27f79187ca8310b6549331e59595e7ba";
+    goblins.flake = false;
+
     iohk-monitoring-framework.url = "github:input-output-hk/iohk-monitoring-framework/066f7002aac5a0efc20e49643fea45454f226caa";
     iohk-monitoring-framework.flake = false;
 
@@ -82,8 +85,7 @@
         let hackages = myHackages system ghcVersion;
         in {
           inherit (hackages) extra-hackages extra-hackage-tarballs;
-          #modules = haskellModules ++ hackages.modules;
-          modules = hackages.modules;
+          modules = haskellModules ++ hackages.modules;
         };
 
       ghcVersion = "ghc8107";
@@ -129,6 +131,7 @@
             "${inputs.cardano-ledger}/libs/vector-map"
             "${inputs.cardano-prelude}/cardano-prelude"
             "${inputs.cardano-prelude}/cardano-prelude-test"
+            "${inputs.goblins}"
             "${inputs.iohk-monitoring-framework}/contra-tracer"
             "${inputs.iohk-monitoring-framework}/iohk-monitoring"
             "${inputs.iohk-monitoring-framework}/plugins/backend-aggregation"
@@ -175,7 +178,15 @@
           ]
         );
 
-        haskellModules = 42;
+        haskellModules = [
+          ({ pkgs, ... }:
+            {
+              packages = {
+                contra-tracers.doHaddock = false;
+              };
+            }
+          )
+        ];
 
         projectFor = system:
           let
@@ -192,26 +203,16 @@
                 withHoogle = true;
                 exactDeps = true;
 
-                nativeBuildInputs = [
-                  pkgs'.cabal-install
-                  pkgs'.hlint
-                  pkgs'.haskellPackages.cabal-fmt
-                  pkgs'.nixpkgs-fmt
-                ];
+                # nativeBuildInputs = [
+                #   pkgs'.cabal-install
+                #   pkgs'.hlint
+                #   pkgs'.haskellPackages.cabal-fmt
+                #   pkgs'.nixpkgs-fmt
+                # ];
 
                 tools.haskell-language-server = { };
 
-                additional = ps: with ps; [
-                  cardano-api
-                  cardano-crypto-class
-                  cardano-ledger-core
-                  cardano-prelude
-                  ouroboros-consensus
-                  ouroboros-consensus-shelley
-                  plutus-core
-                  plutus-ledger-api
-                  plutus-tx
-                ];
+                additional = ps: with ps; [ ];
               };
 
             });
@@ -222,9 +223,11 @@
 
       hackages = perSystem (system: hackagesFor system);
 
+      devShell = perSystem (system: self.flake.${system}.devShell);
+
       # Built by `nix build .`
-      defaultPackage = perSystem (system:
-        let lib = "kupo:exe:kupo";
-        in self.flake.${system}.packages.${lib});
+      # defaultPackage = perSystem (system:
+      #   let lib = "kupo:exe:kupo";
+      #   in self.flake.${system}.packages.${lib});
     };
 }
