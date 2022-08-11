@@ -4,3 +4,9 @@
 ## Nix
 /result
 /result-*
+
+## Stack
+.stack-work/
+
+## Cabal
+dist-newstyle/

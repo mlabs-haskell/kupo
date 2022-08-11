@@ -268,6 +268,23 @@
         "type": "github"
       }
     },
+    "goblins": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1598362523,
+        "narHash": "sha256-z9ut0y6umDIjJIRjz9KSvKgotuw06/S8QDwOtVdGiJ0=",
+        "owner": "input-output-hk",
+        "repo": "goblins",
+        "rev": "cde90a2b27f79187ca8310b6549331e59595e7ba",
+        "type": "github"
+      },
+      "original": {
+        "owner": "input-output-hk",
+        "repo": "goblins",
+        "rev": "cde90a2b27f79187ca8310b6549331e59595e7ba",
+        "type": "github"
+      }
+    },
     "hackage": {
       "flake": false,
       "locked": {
@@ -728,6 +745,7 @@
         "direct-sqlite": "direct-sqlite",
         "ekg-json": "ekg-json",
         "flat": "flat",
+        "goblins": "goblins",
         "haskell-nix-extra-hackage": "haskell-nix-extra-hackage",
         "haskellNix": "haskellNix",
         "hedgehog-extras": "hedgehog-extras",

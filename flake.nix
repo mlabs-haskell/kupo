@@ -61,6 +61,9 @@
 
     direct-sqlite.url = "github:IreneKnapp/direct-sqlite/ab62e1e0e85ca9b92a55265744821ccfb75b0633";
     direct-sqlite.flake = false;
+
+    goblins.url = "github:input-output-hk/goblins/cde90a2b27f79187ca8310b6549331e59595e7ba";
+    goblins.flake = false;
   };
 
   outputs = { self, nixpkgs, haskellNix, haskell-nix-extra-hackage, iohk-nix, ... }@inputs:
@@ -73,6 +76,7 @@
         import nixpkgs {
           inherit system;
           inherit (haskellNix) config; # { allowUnsupportedSystem = true; wine = { ... }; }
+          # iohkNix overlay needed for cardano-api wich uses a patched libsodium
           overlays = [ haskellNix.overlay iohk-nix.overlays.crypto ];
         };
 
@@ -82,8 +86,7 @@
         let hackages = myHackages system ghcVersion;
         in {
           inherit (hackages) extra-hackages extra-hackage-tarballs;
-          #modules = haskellModules ++ hackages.modules;
-          modules = hackages.modules;
+          modules = haskellModules ++ hackages.modules;
         };
 
       ghcVersion = "ghc8107";
@@ -172,10 +175,19 @@
             "${inputs.ogmios}/server/modules/contra-tracers"
             "${inputs.ogmios}/server/modules/fast-bech32"
             "${inputs.direct-sqlite}"
+            "${inputs.goblins}"
           ]
         );
 
-        haskellModules = 42;
+        haskellModules = [
+          ({ pkgs, ... }:
+            {
+              packages = {
+                contra-tracers.doHaddock = false;
+              };
+            }
+          )
+        ];
 
         projectFor = system:
           let
@@ -192,26 +204,9 @@
                 withHoogle = true;
                 exactDeps = true;
 
-                nativeBuildInputs = [
-                  pkgs'.cabal-install
-                  pkgs'.hlint
-                  pkgs'.haskellPackages.cabal-fmt
-                  pkgs'.nixpkgs-fmt
-                ];
-
                 tools.haskell-language-server = { };
 
-                additional = ps: with ps; [
-                  cardano-api
-                  cardano-crypto-class
-                  cardano-ledger-core
-                  cardano-prelude
-                  ouroboros-consensus
-                  ouroboros-consensus-shelley
-                  plutus-core
-                  plutus-ledger-api
-                  plutus-tx
-                ];
+                additional = ps: with ps; [ ];
               };
 
             });
@@ -219,8 +214,8 @@
 
     in {
       flake = perSystem (system: (projectFor system).flake { });
-
       hackages = perSystem (system: hackagesFor system);
+      devShell = perSystem (system: self.flake.${system}.devShell);
 
       # Built by `nix build .`
       defaultPackage = perSystem (system:
