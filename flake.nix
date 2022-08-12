@@ -192,9 +192,10 @@
         projectFor = system:
           let
             pkgs = nixpkgsFor system;
+            musl64 = pkgs.pkgsCross.musl64;
             pkgs' = nixpkgsFor' system;
             hackages = hackagesFor pkgs.system; # TODO why pkgs.?
-            pkgSet = pkgs.haskell-nix.cabalProject' ({
+            pkgSet = musl64.haskell-nix.cabalProject' ({
               name = "kupo";
               src = ./.;
               compiler-nix-name = ghcVersion;
