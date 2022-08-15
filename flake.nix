@@ -68,7 +68,8 @@
 
   outputs = { self, nixpkgs, haskellNix, haskell-nix-extra-hackage, iohk-nix, ... }@inputs:
     let
-      defaultSystems = [ "x86_64-linux" "x86_64-darwin" ];
+      # defaultSystems = [ "x86_64-linux" "x86_64-darwin" ];
+      defaultSystems = [ "x86_64-linux" ];
 
       perSystem = nixpkgs.lib.genAttrs defaultSystems;
 
@@ -222,5 +223,11 @@
       defaultPackage = perSystem (system:
         let lib = "kupo:exe:kupo";
         in self.flake.${system}.packages.${lib});
+
+      nixosModules.kupo = { pkgs, lib, ... }: {
+        imports = [ ./kupo-nixos-module.nix ];
+        services.kupo.package = lib.mkDefault self.flake.${pkgs.system}.packages."kupo:exe:kupo";
+      };
+
     };
 }
