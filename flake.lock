@@ -454,24 +454,6 @@
         "type": "github"
       }
     },
-    "iohk-nix": {
-      "inputs": {
-        "nixpkgs": "nixpkgs_2"
-      },
-      "locked": {
-        "lastModified": 1658222743,
-        "narHash": "sha256-yFH01psqx30y5Ws4dBElLkxYpIxxqZx4G+jCVhsXpnA=",
-        "owner": "input-output-hk",
-        "repo": "iohk-nix",
-        "rev": "9a604d01bd4420ab7f396f14d1947fbe2ce7db8b",
-        "type": "github"
-      },
-      "original": {
-        "owner": "input-output-hk",
-        "repo": "iohk-nix",
-        "type": "github"
-      }
-    },
     "lowdown-src": {
       "flake": false,
       "locked": {
@@ -635,20 +617,6 @@
         "type": "github"
       }
     },
-    "nixpkgs_2": {
-      "locked": {
-        "lastModified": 1660072842,
-        "narHash": "sha256-Qv6Yz5k2BUQ1988H2JnjN/4VxLsp0aR+rXSlk6mnDmU=",
-        "owner": "NixOS",
-        "repo": "nixpkgs",
-        "rev": "97dfd0e253db1488b15fadf857af410732840d08",
-        "type": "github"
-      },
-      "original": {
-        "id": "nixpkgs",
-        "type": "indirect"
-      }
-    },
     "ogmios": {
       "flake": false,
       "locked": {
@@ -751,7 +719,6 @@
         "hedgehog-extras": "hedgehog-extras",
         "io-sim": "io-sim",
         "iohk-monitoring-framework": "iohk-monitoring-framework",
-        "iohk-nix": "iohk-nix",
         "nixpkgs": [
           "haskellNix",
           "nixpkgs-unstable"

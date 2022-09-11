@@ -3,13 +3,16 @@
 
   inputs = {
     haskellNix.url = "github:input-output-hk/haskell.nix";
+
     nixpkgs.follows = "haskellNix/nixpkgs-unstable";
-    iohk-nix.url = "github:input-output-hk/iohk-nix";
+    # nixpkgs.follows = "haskellNix/nixpkgs-2105";
+
+    # # TODO do we need it?
+    # iohk-nix.url = "github:input-output-hk/iohk-nix";
 
     haskell-nix-extra-hackage.url = "github:mlabs-haskell/haskell-nix-extra-hackage/ee50d7eb739819efdb27bda9f444e007c12e9833";
     haskell-nix-extra-hackage.inputs.haskell-nix.follows = "haskellNix";
     haskell-nix-extra-hackage.inputs.nixpkgs.follows = "nixpkgs";
-
 
     cardano-node.url = "github:input-output-hk/cardano-node/9f1d7dc163ee66410d912e48509d6a2300cfa68a";
     cardano-node.flake = false;
@@ -66,7 +69,8 @@
     goblins.flake = false;
   };
 
-  outputs = { self, nixpkgs, haskellNix, haskell-nix-extra-hackage, iohk-nix, ... }@inputs:
+  # outputs = { self, nixpkgs, haskellNix, haskell-nix-extra-hackage, iohk-nix, ... }@inputs:
+  outputs = { self, nixpkgs, haskellNix, haskell-nix-extra-hackage,... }@inputs:
     let
       # defaultSystems = [ "x86_64-linux" "x86_64-darwin" ];
       defaultSystems = [ "x86_64-linux" ];
@@ -78,7 +82,8 @@
           inherit system;
           inherit (haskellNix) config; # { allowUnsupportedSystem = true; wine = { ... }; }
           # iohkNix overlay needed for cardano-api wich uses a patched libsodium
-          overlays = [ haskellNix.overlay iohk-nix.overlays.crypto ];
+          # overlays = [ haskellNix.overlay iohk-nix.overlays.crypto ];
+          overlays = [ haskellNix.overlay ];
         };
 
       nixpkgsFor' = system: import nixpkgs { inherit system; };
@@ -181,12 +186,11 @@
         );
 
         haskellModules = [
-          ({ pkgs, ... }:
-            {
-              packages = {
-                contra-tracers.doHaddock = false;
-              };
-            }
+          ({ pkgs, ... }: {
+             packages = {
+               contra-tracers.doHaddock = false;
+             };
+           }
           )
         ];
 
@@ -195,7 +199,8 @@
             pkgs = nixpkgsFor system;
             musl64 = pkgs.pkgsCross.musl64;
             pkgs' = nixpkgsFor' system;
-            hackages = hackagesFor pkgs.system; # TODO why pkgs.?
+            hackages = hackagesFor pkgs.system;
+            # pkgSet = { flake = _: {}; };
             pkgSet = musl64.haskell-nix.cabalProject' ({
               name = "kupo";
               src = ./.;
@@ -203,31 +208,33 @@
               inherit (hackages) extra-hackages extra-hackage-tarballs modules;
               index-state = "2022-02-18T00:00:00Z";
               shell = {
-                withHoogle = true;
-                exactDeps = true;
-
+                withHoogle = false;
+                exactDeps = false;
                 tools.haskell-language-server = { };
-
-                additional = ps: with ps; [ ];
               };
-
             });
           in pkgSet;
 
     in {
       flake = perSystem (system: (projectFor system).flake { });
-      hackages = perSystem (system: hackagesFor system);
+
       devShell = perSystem (system: self.flake.${system}.devShell);
 
-      # Built by `nix build .`
-      defaultPackage = perSystem (system:
-        let lib = "kupo:exe:kupo";
-        in self.flake.${system}.packages.${lib});
+      packages = perSystem (system:
+      self.flake.${system}.packages
+
+        // { }
+        # // { kupo-static = let lib = "kupo:exe:kupo"; in self.flake.${system}.packages.${lib}; }
+      );
+
+      # # Built by `nix build .`
+      # defaultPackage = perSystem (system:
+      #   let lib = "kupo:exe:kupo";
+      #   in self.flake.${system}.packages.${lib});
 
       nixosModules.kupo = { pkgs, lib, ... }: {
         imports = [ ./kupo-nixos-module.nix ];
         services.kupo.package = lib.mkDefault self.flake.${pkgs.system}.packages."kupo:exe:kupo";
       };
-
     };
 }

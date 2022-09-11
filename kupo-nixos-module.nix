@@ -12,13 +12,13 @@ in  with lib; {
     };
 
     user = mkOption {
-      description = "User to run Ogmios service as.";
+      description = "User to run kupo service as.";
       type = types.str;
       default = "kupo";
     };
 
     group = mkOption {
-      description = "Group to run Ogmios service as.";
+      description = "Group to run kupo service as.";
       type = types.str;
       default = "kupo";
     };
