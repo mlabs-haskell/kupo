@@ -5,10 +5,6 @@
     haskellNix.url = "github:input-output-hk/haskell.nix";
 
     nixpkgs.follows = "haskellNix/nixpkgs-unstable";
-    # nixpkgs.follows = "haskellNix/nixpkgs-2105";
-
-    # # TODO do we need it?
-    # iohk-nix.url = "github:input-output-hk/iohk-nix";
 
     haskell-nix-extra-hackage.url = "github:mlabs-haskell/haskell-nix-extra-hackage/ee50d7eb739819efdb27bda9f444e007c12e9833";
     haskell-nix-extra-hackage.inputs.haskell-nix.follows = "haskellNix";
@@ -69,7 +65,6 @@
     goblins.flake = false;
   };
 
-  # outputs = { self, nixpkgs, haskellNix, haskell-nix-extra-hackage, iohk-nix, ... }@inputs:
   outputs = { self, nixpkgs, haskellNix, haskell-nix-extra-hackage,... }@inputs:
     let
       # defaultSystems = [ "x86_64-linux" "x86_64-darwin" ];
@@ -91,15 +86,17 @@
       hackagesFor = system:
         let hackages = myHackages system ghcVersion;
         in {
-          inherit (hackages) extra-hackages extra-hackage-tarballs;
-          modules = haskellModules ++ hackages.modules;
+          extra-hackages = [ hackages.extra-hackage ];
+          extra-hackage-tarballs = { myhackage = hackages.extra-hackage-tarball; };
+          modules = haskellModules ++ [ hackages.module ];
         };
 
       ghcVersion = "ghc8107";
 
       myHackages = system: compiler-nix-name:
-        haskell-nix-extra-hackage.mkHackagesFor system compiler-nix-name (
+        haskell-nix-extra-hackage.mkHackageFor system compiler-nix-name (
           [
+            "${inputs.Win32-network}"
             "${inputs.cardano-node}/cardano-api"
             "${inputs.hedgehog-extras}"
             "${inputs.cardano-base}/base-deriving-via"
@@ -146,7 +143,6 @@
             "${inputs.iohk-monitoring-framework}/plugins/backend-trace-forwarder"
             "${inputs.iohk-monitoring-framework}/plugins/scribe-systemd"
             "${inputs.iohk-monitoring-framework}/tracer-transformers"
-            "${inputs.Win32-network}"
             "${inputs.ouroboros-network}/monoidal-synchronisation"
             "${inputs.ouroboros-network}/network-mux"
             "${inputs.ouroboros-network}/ouroboros-consensus"
@@ -174,7 +170,6 @@
             "${inputs.plutus}/prettyprinter-configurable"
             "${inputs.plutus}/stubs/plutus-ghc-stub"
             "${inputs.plutus}/word-array"
-            "${inputs.Win32-network}"
             "${inputs.flat}"
             "${inputs.optparse-applicative}"
             "${inputs.ekg-json}"
@@ -222,7 +217,6 @@
 
       packages = perSystem (system:
       self.flake.${system}.packages
-
         // { }
         # // { kupo-static = let lib = "kupo:exe:kupo"; in self.flake.${system}.packages.${lib}; }
       );
