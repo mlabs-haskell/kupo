@@ -1,6 +1,7 @@
 {
   description = "Kupo - fast, lightweight and configurable chain-index";
 
+
   inputs = {
     haskellNix.url = "github:input-output-hk/haskell.nix";
 
@@ -75,18 +76,14 @@
       nixpkgsFor = system:
         import nixpkgs {
           inherit system;
-          inherit (haskellNix) config; # { allowUnsupportedSystem = true; wine = { ... }; }
-          # iohkNix overlay needed for cardano-api wich uses a patched libsodium
-          # overlays = [ haskellNix.overlay iohk-nix.overlays.crypto ];
+          inherit (haskellNix) config;
           overlays = [ haskellNix.overlay ];
         };
-
-      nixpkgsFor' = system: import nixpkgs { inherit system; };
 
       hackagesFor = system:
         let hackages = myHackages system ghcVersion;
         in {
-          extra-hackages = [ hackages.extra-hackage ];
+          extra-hackages = [ (import hackages.extra-hackage) ];
           extra-hackage-tarballs = { myhackage = hackages.extra-hackage-tarball; };
           modules = haskellModules ++ [ hackages.module ];
         };
@@ -96,7 +93,6 @@
       myHackages = system: compiler-nix-name:
         haskell-nix-extra-hackage.mkHackageFor system compiler-nix-name (
           [
-            "${inputs.Win32-network}"
             "${inputs.cardano-node}/cardano-api"
             "${inputs.hedgehog-extras}"
             "${inputs.cardano-base}/base-deriving-via"
@@ -143,6 +139,7 @@
             "${inputs.iohk-monitoring-framework}/plugins/backend-trace-forwarder"
             "${inputs.iohk-monitoring-framework}/plugins/scribe-systemd"
             "${inputs.iohk-monitoring-framework}/tracer-transformers"
+            "${inputs.Win32-network}"
             "${inputs.ouroboros-network}/monoidal-synchronisation"
             "${inputs.ouroboros-network}/network-mux"
             "${inputs.ouroboros-network}/ouroboros-consensus"
@@ -193,9 +190,7 @@
           let
             pkgs = nixpkgsFor system;
             musl64 = pkgs.pkgsCross.musl64;
-            pkgs' = nixpkgsFor' system;
             hackages = hackagesFor pkgs.system;
-            # pkgSet = { flake = _: {}; };
             pkgSet = musl64.haskell-nix.cabalProject' ({
               name = "kupo";
               src = ./.;
@@ -215,16 +210,11 @@
 
       devShell = perSystem (system: self.flake.${system}.devShell);
 
-      packages = perSystem (system:
-      self.flake.${system}.packages
-        // { }
-        # // { kupo-static = let lib = "kupo:exe:kupo"; in self.flake.${system}.packages.${lib}; }
-      );
+      packages = perSystem (system: self.flake.${system}.packages);
 
-      # # Built by `nix build .`
-      # defaultPackage = perSystem (system:
-      #   let lib = "kupo:exe:kupo";
-      #   in self.flake.${system}.packages.${lib});
+      defaultPackage = perSystem (system:
+        let lib = "kupo:exe:kupo";
+        in self.flake.${system}.packages.${lib});
 
       nixosModules.kupo = { pkgs, lib, ... }: {
         imports = [ ./kupo-nixos-module.nix ];

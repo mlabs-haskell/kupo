@@ -10,3 +10,6 @@
 
 ## Cabal
 dist-newstyle/
+
+## IDEs
+.idea
