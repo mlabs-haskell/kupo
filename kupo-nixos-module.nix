@@ -23,14 +23,19 @@ in  with lib; {
       default = "kupo";
     };
 
+    workDir = mkOption {
+      description = "Path for storing data processed by kupo service";
+      type = path;
+    };
+
     nodeSocket = mkOption {
       description = "Path to cardano-node IPC socket.";
-      type = str;
+      type = path;
     };
 
     nodeConfig = mkOption {
       description = "Path to cardano-node config.json file.";
-      type = str;
+      type = path;
     };
 
     host = mkOption {
@@ -64,6 +69,8 @@ in  with lib; {
       ));
     };
 
+    services.kupo.workDir = mkDefault "/kupo/";
+
     users.users.kupo = mkIf (cfg.user == "kupo") {
       isSystemUser = true;
       group = cfg.group;
@@ -81,7 +88,7 @@ in  with lib; {
         [ "--node-socket" cfg.nodeSocket ]
         [ "--node-config" cfg.nodeConfig ]
         [ "--host" cfg.host ]
-        # [ "--workdir" "/tmp" ]
+        [ "--workdir" cfg.workDir ]
         [ "--in-memory" ]
         [ "--match" "*/*" ]
         [ "--since" "origin" ]
@@ -89,37 +96,38 @@ in  with lib; {
       ]);
 
       serviceConfig = {
-        User = cfg.user;
-        Group = cfg.group;
         # Security
-        UMask = "0077";
         AmbientCapabilities = [ "CAP_NET_BIND_SERVICE" ];
         CapabilityBoundingSet = [ "CAP_NET_BIND_SERVICE" ];
-        ProcSubset = "pid";
-        ProtectProc = "invisible";
-        NoNewPrivileges = true;
         DevicePolicy = "closed";
-        ProtectSystem = "strict";
-        ProtectHome = true;
-        PrivateTmp = true;
+        ExecStartPre = "${pkgs.coreutils-full}/bin/mkdir -p ${cfg.workDir}";
+        Group = cfg.group;
+        LockPersonality = true;
+        MemoryDenyWriteExecute = true;
+        NoNewPrivileges = true;
         PrivateDevices = true;
+        PrivateMounts = true;
+        PrivateTmp = true;
         PrivateUsers = true;
-        ProtectHostname = true;
+        ProcSubset = "pid";
         ProtectClock = true;
-        ProtectKernelTunables = true;
-        ProtectKernelModules = true;
-        ProtectKernelLogs = true;
         ProtectControlGroups = true;
+        ProtectHome = true;
+        ProtectHostname = true;
+        ProtectKernelLogs = true;
+        ProtectKernelModules = true;
+        ProtectKernelTunables = true;
+        ProtectProc = "invisible";
+        ProtectSystem = "strict";
+        RemoveIPC = true;
         RestrictAddressFamilies = [ "AF_UNIX" "AF_INET" "AF_INET6" ];
         RestrictNamespaces = true;
-        LockPersonality = true;
         RestrictRealtime = true;
         RestrictSUIDSGID = true;
-        RemoveIPC = true;
-        PrivateMounts = true;
         SystemCallArchitectures = "native";
         SystemCallFilter = [ "~@cpu-emulation @debug @keyring @mount @obsolete @privileged @setuid @resources" ];
-        MemoryDenyWriteExecute = true;
+        UMask = "0077";
+        User = cfg.user;
       };
     };
   };
