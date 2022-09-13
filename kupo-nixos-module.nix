@@ -13,19 +13,20 @@ in  with lib; {
 
     user = mkOption {
       description = "User to run kupo service as.";
-      type = types.str;
+      type = str;
       default = "kupo";
     };
 
     group = mkOption {
       description = "Group to run kupo service as.";
-      type = types.str;
+      type = str;
       default = "kupo";
     };
 
     workDir = mkOption {
       description = "Path for storing data processed by kupo service";
       type = path;
+      default = "/kupo/";
     };
 
     nodeSocket = mkOption {
