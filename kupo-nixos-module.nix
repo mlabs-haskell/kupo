@@ -59,17 +59,18 @@ in  with lib; {
       }
     ];
 
-    # get configuration from cardano-node module if there is one
-    services.kupo = mkIf (config ? services.cardano-node && config.services.cardano-node.enable) {
-      nodeSocket = mkDefault config.services.cardano-node.socketPath;
-      # hacky way to get cardano-node config path from service
-      nodeConfig = mkDefault (builtins.head (
-        builtins.match ''.* (/nix/store/[a-zA-Z0-9]+-config-0-0\.json) .*''
-          (builtins.readFile (builtins.replaceStrings [ " " ] [ "" ] config.systemd.services.cardano-node.serviceConfig.ExecStart))
-      ));
-    };
-
-    services.kupo.workDir = mkDefault "/kupo/";
+    services.kupo = {
+      workDir = mkDefault "/kupo/";
+    }
+      # get configuration from cardano-node module if there is one
+      // mkIf (config ? services.cardano-node && config.services.cardano-node.enable) {
+        nodeSocket = mkDefault config.services.cardano-node.socketPath;
+        # hacky way to get cardano-node config path from service
+        nodeConfig = mkDefault (builtins.head (
+          builtins.match ''.* (/nix/store/[a-zA-Z0-9]+-config-0-0\.json) .*''
+            (builtins.readFile (builtins.replaceStrings [ " " ] [ "" ] config.systemd.services.cardano-node.serviceConfig.ExecStart))
+        ));
+      };
 
     users.users.kupo = mkIf (cfg.user == "kupo") {
       isSystemUser = true;
