@@ -24,20 +24,26 @@ module Kupo.Data.Cardano
     , TransactionId
     , transactionIdToText
     , transactionIdFromHash
+    , transactionIdToBytes
     , unsafeTransactionIdFromBytes
     , getTransactionId
     , transactionIdToJson
+    , transactionIdFromText
 
       -- * OutputIndex
     , OutputIndex
     , getOutputIndex
     , outputIndexToJson
+    , outputIndexFromText
+    , outputIndexToText
 
       -- * Input
     , Input
     , OutputReference
     , mkOutputReference
     , withReferences
+    , outputReferenceToText
+    , outputReferenceFromText
 
       -- * Output
     , Output
@@ -47,6 +53,11 @@ module Kupo.Data.Cardano
     , getValue
     , getScript
 
+      -- * ComparableOutput
+    , ComparableOutput
+    , fromComparableOutput
+    , toComparableOutput
+
     -- * Value
     , Value
     , hasAssetId
@@ -54,6 +65,11 @@ module Kupo.Data.Cardano
     , unsafeValueFromList
     , valueToJson
     , assetNameMaxLength
+
+      -- * ComparableValue
+    , ComparableValue
+    , fromComparableValue
+    , toComparableValue
 
     -- * AssetId
     , AssetId
@@ -190,71 +206,105 @@ module Kupo.Data.Cardano
 import Kupo.Prelude
 
 import Cardano.Binary
-    ( DecoderError (..), FromCBOR (..), decodeAnnotator )
+    ( DecoderError (..)
+    , FromCBOR (..)
+    , decodeAnnotator
+    )
 import Cardano.Crypto.Hash
     ( Blake2b_224
     , Blake2b_256
     , Hash
     , HashAlgorithm (..)
-    , pattern UnsafeHash
     , hashFromBytes
     , hashFromTextAsHex
     , hashToBytesShort
+    , pattern UnsafeHash
     , sizeHash
     )
 import Cardano.Ledger.Allegra
-    ( AllegraEra )
+    ( AllegraEra
+    )
 import Cardano.Ledger.Alonzo
-    ( AlonzoEra )
+    ( AlonzoEra
+    )
 import Cardano.Ledger.Babbage
-    ( BabbageEra )
+    ( BabbageEra
+    )
 import Cardano.Ledger.Crypto
-    ( Crypto, StandardCrypto )
+    ( Crypto
+    , StandardCrypto
+    )
 import Cardano.Ledger.Mary
-    ( MaryEra )
+    ( MaryEra
+    )
 import Cardano.Ledger.Shelley
-    ( ShelleyEra )
+    ( ShelleyEra
+    )
 import Cardano.Ledger.Val
-    ( Val (inject) )
+    ( Val (inject)
+    )
 import Cardano.Slotting.Block
-    ( BlockNo (..) )
+    ( BlockNo (..)
+    )
 import Cardano.Slotting.Slot
-    ( SlotNo (..) )
+    ( SlotNo (..)
+    )
 import Control.Arrow
-    ( left )
+    ( left
+    )
 import Data.Binary.Put
-    ( runPut )
+    ( runPut
+    )
 import Data.ByteString.Bech32
-    ( HumanReadablePart (..), encodeBech32 )
+    ( HumanReadablePart (..)
+    , encodeBech32
+    )
 import Data.Maybe.Strict
-    ( StrictMaybe (..), maybeToStrictMaybe, strictMaybe, strictMaybeToMaybe )
+    ( StrictMaybe (..)
+    , maybeToStrictMaybe
+    , strictMaybe
+    , strictMaybeToMaybe
+    )
 import Data.Sequence.Strict
-    ( pattern (:<|), pattern Empty, StrictSeq )
+    ( StrictSeq
+    , pattern (:<|)
+    , pattern Empty
+    )
 import GHC.Records
-    ( HasField (..) )
+    ( HasField (..)
+    )
 import Ouroboros.Consensus.Block
-    ( ConvertRawHash (..) )
+    ( ConvertRawHash (..)
+    )
 import Ouroboros.Consensus.Byron.Ledger.Mempool
-    ( GenTx (..) )
+    ( GenTx (..)
+    )
 import Ouroboros.Consensus.Cardano.Block
-    ( CardanoBlock, HardForkBlock (..) )
+    ( CardanoBlock
+    , HardForkBlock (..)
+    )
 import Ouroboros.Consensus.HardFork.Combinator
-    ( OneEraHash (..) )
+    ( OneEraHash (..)
+    )
 import Ouroboros.Consensus.Ledger.SupportsMempool
-    ( HasTxs (extractTxs) )
+    ( HasTxs (extractTxs)
+    )
 import Ouroboros.Consensus.Shelley.Ledger.Block
-    ( ShelleyBlock (..) )
+    ( ShelleyBlock (..)
+    )
 import Ouroboros.Consensus.Util
-    ( eitherToMaybe )
+    ( eitherToMaybe
+    )
 import Ouroboros.Network.Block
-    ( pattern BlockPoint
-    , pattern GenesisPoint
-    , HeaderHash
+    ( HeaderHash
     , blockPoint
+    , pattern BlockPoint
+    , pattern GenesisPoint
     , pointSlot
     )
 import Ouroboros.Network.Point
-    ( WithOrigin (..) )
+    ( WithOrigin (..)
+    )
 
 import Ouroboros.Consensus.Cardano
     ()
@@ -449,7 +499,7 @@ instance IsBlock Block where
                 case Ledger.Alonzo.isValid tx of
                     Ledger.Alonzo.IsValid True ->
                         traverseAndTransform fromAlonzoOutput txId 0 outs
-                    _ ->
+                    Ledger.Alonzo.IsValid False ->
                         []
         TransactionBabbage tx ->
             let
@@ -460,7 +510,7 @@ instance IsBlock Block where
                 case Ledger.Alonzo.isValid tx of
                     Ledger.Alonzo.IsValid True ->
                         traverseAndTransform identity txId 0 outs
-                    _ ->
+                    Ledger.Alonzo.IsValid False ->
                         []
       where
         traverseAndTransformByron
@@ -475,7 +525,7 @@ instance IsBlock Block where
             (out:rest) ->
                 let
                     outputRef = mkOutputReference txId ix
-                    results   = traverseAndTransformByron transform txId (succ ix) rest
+                    results   = traverseAndTransformByron transform txId (next ix) rest
                  in
                     case fn outputRef (transform out) of
                         Nothing ->
@@ -495,7 +545,7 @@ instance IsBlock Block where
             output :<| rest ->
                 let
                     outputRef = mkOutputReference txId ix
-                    results   = traverseAndTransform transform txId (succ ix) rest
+                    results   = traverseAndTransform transform txId (next ix) rest
                  in
                     case fn outputRef (transform output) of
                         Nothing ->
@@ -572,6 +622,11 @@ transactionIdFromHash =
     Ledger.TxId . Ledger.unsafeMakeSafeHash
 {-# INLINABLE transactionIdFromHash #-}
 
+transactionIdToBytes :: TransactionId -> ByteString
+transactionIdToBytes =
+    (\(UnsafeHash h) -> fromShort h) . Ledger.extractHash . Ledger._unTxId
+{-# INLINABLE transactionIdToBytes #-}
+
 unsafeTransactionIdFromBytes
     :: HasCallStack
     => ByteString
@@ -613,24 +668,36 @@ outputIndexToJson =
     Json.integer . toInteger
 {-# INLINABLE outputIndexToJson #-}
 
+outputIndexFromText :: Text -> Maybe OutputIndex
+outputIndexFromText txt = do
+    (ix, remIx) <- either (const Nothing) Just (T.decimal txt)
+    guard (T.null remIx)
+    pure (fromInteger ix)
+{-# INLINABLE outputIndexFromText #-}
+
+outputIndexToText :: OutputIndex -> Text
+outputIndexToText = show
+{-# INLINABLE outputIndexToText #-}
+
+
 -- Transaction
 
 type Transaction = Transaction' StandardCrypto
 
 data Transaction' crypto
     = TransactionByron
-        Ledger.Byron.Tx
-        Ledger.Byron.TxId
+        !Ledger.Byron.Tx
+        !Ledger.Byron.TxId
     | TransactionShelley
-        (Ledger.Shelley.Tx (ShelleyEra crypto))
+        !(Ledger.Shelley.Tx (ShelleyEra crypto))
     | TransactionAllegra
-        (Ledger.Shelley.Tx (AllegraEra crypto))
+        !(Ledger.Shelley.Tx (AllegraEra crypto))
     | TransactionMary
-        (Ledger.Shelley.Tx (MaryEra crypto))
+        !(Ledger.Shelley.Tx (MaryEra crypto))
     | TransactionAlonzo
-        (Ledger.Alonzo.ValidatedTx (AlonzoEra crypto))
+        !(Ledger.Alonzo.ValidatedTx (AlonzoEra crypto))
     | TransactionBabbage
-        (Ledger.Alonzo.ValidatedTx (BabbageEra crypto))
+        !(Ledger.Alonzo.ValidatedTx (BabbageEra crypto))
 
 -- Input
 
@@ -666,12 +733,37 @@ withReferences txId = loop 0
         [] -> []
         out:rest ->
             let
-                results = loop (succ ix) rest
+                results = loop (next ix) rest
              in
                 (mkOutputReference txId ix, out) : results
 
 instance HasTransactionId Ledger.TxIn where
     getTransactionId (Ledger.TxIn i _) = i
+
+transactionIdFromText
+    :: Text
+    -> Maybe TransactionId
+transactionIdFromText =
+    fmap transactionIdFromHash . hashFromTextAsHex @Blake2b_256
+{-# INLINABLE transactionIdFromText #-}
+
+outputReferenceFromText :: Text -> Maybe OutputReference
+outputReferenceFromText txt =
+    case T.splitOn "@" txt of
+        [outputIndex, txId] -> do
+            mkOutputReference
+                <$> transactionIdFromText txId
+                <*> outputIndexFromText outputIndex
+        _ ->
+            Nothing
+
+outputReferenceToText :: OutputReference -> Text
+outputReferenceToText outRef =
+    outputIndexToText (getOutputIndex outRef)
+    <>
+    "@"
+    <>
+    transactionIdToText (getTransactionId outRef)
 
 -- Output
 
@@ -773,12 +865,37 @@ getScript (Ledger.Babbage.TxOut _address _value _datum refScript) =
     strictMaybeToMaybe refScript
 {-# INLINABLE getScript #-}
 
+-- ComparableOutput
+
+data ComparableOutput = ComparableOutput
+    { comparableOutputAddress :: !Address
+    , comparableOutputValue :: !ComparableValue
+    , comparableOutputDatum :: !Datum
+    , comparableOutputScript :: !(Maybe Script)
+    } deriving (Generic, Eq, Show, Ord)
+
+toComparableOutput
+    :: Output
+    -> ComparableOutput
+toComparableOutput out = ComparableOutput
+    { comparableOutputAddress = getAddress out
+    , comparableOutputValue = toComparableValue (getValue out)
+    , comparableOutputDatum = getDatum out
+    , comparableOutputScript = getScript out
+    }
+
+fromComparableOutput
+    :: ComparableOutput
+    -> Output
+fromComparableOutput (ComparableOutput addr val datum script) =
+    mkOutput addr (fromComparableValue val) datum script
+
 -- ScriptReference
 
 data ScriptReference
     = NoScript
-    | ReferencedScript ScriptHash
-    | InlineScript Script
+    | ReferencedScript !ScriptHash
+    | InlineScript !Script
     deriving (Eq, Show)
 
 mkScriptReference
@@ -1057,7 +1174,8 @@ datumHashFromText
 datumHashFromText str =
     case datumHashFromBytes <$> decodeBase16 (encodeUtf8 str) of
         Right (Just hash) -> Just hash
-        _ -> Nothing
+        Right Nothing -> Nothing
+        Left{} -> Nothing
 
 unsafeDatumHashFromBytes
     :: forall crypto.
@@ -1192,6 +1310,21 @@ valueToJson (Ledger.Value coins assets) = Json.pairs $ mconcat
             (encodeBase16 (fromShort pid))
         | otherwise     = Json.fromText
             (encodeBase16 (fromShort pid) <> "." <> encodeBase16 (fromShort bytes))
+
+-- ComparableValue
+
+data ComparableValue = ComparableValue
+    { comparableValueAda :: !Integer
+    , comparableValueAssets :: !(Map PolicyId (Map AssetName Integer))
+    } deriving (Generic, Eq, Show, Ord)
+
+fromComparableValue :: ComparableValue -> Value
+fromComparableValue (ComparableValue ada assets) =
+    Ledger.Value ada assets
+
+toComparableValue :: Value -> ComparableValue
+toComparableValue (Ledger.Value ada assets) =
+    ComparableValue ada assets
 
 -- AssetId
 

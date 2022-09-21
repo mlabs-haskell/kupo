@@ -30,19 +30,31 @@ module Kupo.App.Database
 import Kupo.Prelude
 
 import Control.Exception
-    ( mask, onException, throwIO )
+    ( mask
+    , onException
+    , throwIO
+    )
 import Control.Monad.Class.MonadSTM
-    ( MonadSTM (..) )
+    ( MonadSTM (..)
+    )
 import Control.Monad.Class.MonadThrow
-    ( bracket_, catch )
+    ( bracket_
+    , catch
+    )
 import Control.Monad.Class.MonadTimer
-    ( threadDelay )
+    ( threadDelay
+    )
 import Control.Tracer
-    ( Tracer, traceWith )
+    ( Tracer
+    , traceWith
+    )
 import Data.FileEmbed
-    ( embedFile )
+    ( embedFile
+    )
 import Data.Severity
-    ( HasSeverityAnnotation (..), Severity (..) )
+    ( HasSeverityAnnotation (..)
+    , Severity (..)
+    )
 import Database.SQLite.Simple
     ( Connection
     , Error (..)
@@ -61,15 +73,24 @@ import Database.SQLite.Simple
     , withStatement
     )
 import Database.SQLite.Simple.ToField
-    ( ToField (..) )
+    ( ToField (..)
+    )
 import GHC.TypeLits
-    ( KnownSymbol, symbolVal )
+    ( KnownSymbol
+    , symbolVal
+    )
 import Kupo.Data.Configuration
-    ( LongestRollback (..) )
+    ( LongestRollback (..)
+    )
 import Kupo.Data.Database
-    ( BinaryData (..), Checkpoint (..), Input (..), ScriptReference (..) )
+    ( BinaryData (..)
+    , Checkpoint (..)
+    , Input (..)
+    , ScriptReference (..)
+    )
 import Numeric
-    ( Floating (..) )
+    ( Floating (..)
+    )
 
 import qualified Data.Set as Set
 import qualified Data.Text as T
@@ -217,10 +238,10 @@ withDatabase tr mode (DBLock readers writer) k filePath action = do
         case mode of
             ShortLived -> bracket_
                 (do
-                    atomically (modifyTVar' readers succ)
+                    atomically (modifyTVar' readers next)
                     atomically (readTVar writer >>= check . not)
                 )
-                (atomically (modifyTVar' readers pred))
+                (atomically (modifyTVar' readers prev))
                 (between conn)
 
             LongLived -> bracket_
@@ -238,9 +259,7 @@ data ConnectionType = LongLived | ShortLived
 
 -- ** Lock
 
-data DBLock (m :: Type -> Type) = DBLock
-    (TVar m Word)
-    (TVar m Bool)
+data DBLock (m :: Type -> Type) = DBLock !(TVar m Word) !(TVar m Bool)
 
 newLock :: MonadSTM m => m (DBLock m)
 newLock = DBLock
@@ -289,7 +308,7 @@ mkDatabase tr longestRollback bracketConnection = Database
             inputs
 
     , deleteInputsByAddress = \addressLike -> ReaderT $ \conn -> do
-        let qry = Query $ "DELETE FROM inputs WHERE address " <> addressLike
+        let qry = Query $ "DELETE FROM inputs WHERE " <> addressLike
         execute_ conn qry
         changes conn
 
@@ -330,36 +349,35 @@ mkDatabase tr longestRollback bracketConnection = Database
         else do
             return 0
 
-    , foldInputs = \addressLike yield -> ReaderT $ \conn -> do
-        let matchMaybeBytes = \case
-                SQLBlob bytes -> Just bytes
-                _ -> Nothing
-        let matchMaybeWord64 = \case
-                SQLInteger (fromIntegral -> wrd) -> Just wrd
-                _ -> Nothing
-        let qry = "SELECT output_reference, address, value, datum_hash, script_hash, created_at, createdAt.header_hash, spent_at, spentAt.header_hash \
+    , foldInputs = \whereClause yield -> ReaderT $ \conn -> do
+        let qry = "SELECT output_reference, address, value, datum_hash, script_hash,\
+                    \ created_at, createdAt.header_hash,\
+                    \ spent_at, spentAt.header_hash \
                   \FROM inputs \
                   \JOIN checkpoints AS createdAt ON createdAt.slot_no = created_at \
                   \LEFT OUTER JOIN checkpoints AS spentAt ON spentAt.slot_no = spent_at \
-                  \WHERE address " <> addressLike <> " ORDER BY created_at DESC"
+                  \WHERE " <> whereClause <> " \
+                  \ORDER BY created_at DESC"
 
         -- TODO: Allow resolving datums / scripts on demand through LEFT JOIN
         --
         -- See [#21](https://github.com/CardanoSolutions/kupo/issues/21)
-        let datum = Nothing
-        let refScript = Nothing
-        fold_ conn (Query qry) () $ \() -> \case
-            [ SQLBlob outputReference
-                , SQLText address
-                , SQLBlob value
-                , matchMaybeBytes -> datumHash
-                , matchMaybeBytes -> refScriptHash
-                , SQLInteger (fromIntegral -> createdAtSlotNo)
-                , SQLBlob createdAtHeaderHash
-                , matchMaybeWord64 -> spentAtSlotNo
-                , matchMaybeBytes -> spentAtHeaderHash
-                ] -> yield Input{..}
-            (xs :: [SQLData]) -> throwIO (UnexpectedRow addressLike [xs])
+        let (datum, refScript) = (Nothing, Nothing)
+
+        Sqlite.fold_ conn (Query qry) () $ \() -> \case
+            [  SQLBlob outputReference
+             , SQLText address
+             , SQLBlob value
+             , matchMaybeBytes -> datumHash
+             , matchMaybeBytes -> refScriptHash
+             , SQLInteger (fromIntegral -> createdAtSlotNo)
+             , SQLBlob createdAtHeaderHash
+             , matchMaybeWord64 -> spentAtSlotNo
+             , matchMaybeBytes -> spentAtHeaderHash
+             ] ->
+                yield Input{..}
+            (xs :: [SQLData]) ->
+                throwIO (UnexpectedRow whereClause [xs])
 
     , insertCheckpoints = \cps -> ReaderT $ \conn -> do
         mapM_
@@ -423,7 +441,7 @@ mkDatabase tr longestRollback bracketConnection = Database
         Sqlite.query conn qry (Only (SQLBlob binaryDataHash)) <&> \case
             [[SQLBlob binaryData]] ->
                 Just (mk BinaryData{..})
-            _ ->
+            _notSQLBlob ->
                 Nothing
 
     , pruneBinaryData = ReaderT $ \conn -> do
@@ -463,7 +481,7 @@ mkDatabase tr longestRollback bracketConnection = Database
         Sqlite.query conn qry (Only (SQLBlob scriptHash)) <&> \case
             [[SQLBlob script]] ->
                 Just (mk ScriptReference{..})
-            _ ->
+            _notSQLBlob ->
                 Nothing
 
     , deletePattern = \p -> ReaderT $ \conn -> do
@@ -552,7 +570,7 @@ retryWhenBusy action =
         ErrorBusy -> do
             threadDelay 0.1
             retryWhenBusy action
-        _ ->
+        _otherError ->
             throwIO e
     )
 
@@ -579,6 +597,18 @@ withTransaction conn immediate action =
     commit   = execute_ conn "COMMIT TRANSACTION"
     rollback = execute_ conn "ROLLBACK TRANSACTION"
 
+matchMaybeBytes :: SQLData -> Maybe ByteString
+matchMaybeBytes = \case
+    SQLBlob bytes -> Just bytes
+    _notSQLBlob -> Nothing
+{-# INLINABLE matchMaybeBytes #-}
+
+matchMaybeWord64 :: SQLData -> Maybe Word64
+matchMaybeWord64 = \case
+    SQLInteger (fromIntegral -> wrd) -> Just wrd
+    _notSQLInteger -> Nothing
+{-# INLINABLE matchMaybeWord64 #-}
+
 --
 -- Migrations
 --
@@ -593,7 +623,7 @@ databaseVersion conn =
         nextRow stmt >>= \case
             Just (Only version) ->
                 pure version
-            _ ->
+            _unexpectedVersion ->
                 throwIO UnexpectedUserVersion
 
 runMigrations :: Tracer IO TraceDatabase -> Connection -> MigrationRevision -> IO ()
@@ -645,7 +675,7 @@ instance Exception UnexpectedUserVersionException
 
 -- | Something went wrong when unmarshalling data from the database.
 data UnexpectedRowException
-    = UnexpectedRow Text [[SQLData]]
+    = UnexpectedRow !Text ![[SQLData]]
     deriving Show
 instance Exception UnexpectedRowException
 

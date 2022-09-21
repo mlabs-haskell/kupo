@@ -8,13 +8,15 @@ module Test.Kupo.Data.Generators where
 
 import Kupo.Prelude
 
+import Data.Bits
+    ( shiftL
+    )
 import Kupo.Data.Cardano
     ( Address
     , BinaryData
     , Blake2b_224
     , Blake2b_256
     , Block
-    , pattern BlockPoint
     , Datum
     , DatumHash
     , HeaderHash
@@ -36,7 +38,9 @@ import Kupo.Data.Cardano
     , mkOutput
     , mkOutputReference
     , noDatum
+    , pattern BlockPoint
     , scriptHashToBytes
+    , unsafeAddressFromBytes
     , unsafeBinaryDataFromBytes
     , unsafeDatumHashFromBytes
     , unsafeHeaderHashFromBytes
@@ -47,15 +51,24 @@ import Kupo.Data.Cardano
     , unsafeValueFromList
     )
 import Kupo.Data.Configuration
-    ( InputManagement (..) )
+    ( InputManagement (..)
+    )
 import Kupo.Data.Health
-    ( ConnectionStatus (..), Health (..) )
+    ( ConnectionStatus (..)
+    , Health (..)
+    )
 import Kupo.Data.Http.ForcedRollback
-    ( ForcedRollback (..), ForcedRollbackLimit (..) )
+    ( ForcedRollback (..)
+    , ForcedRollbackLimit (..)
+    )
 import Kupo.Data.Pattern
-    ( Pattern, Result (..) )
+    ( MatchBootstrap (..)
+    , Pattern (..)
+    , Result (..)
+    )
 import System.IO.Unsafe
-    ( unsafePerformIO )
+    ( unsafePerformIO
+    )
 import Test.QuickCheck
     ( Arbitrary (..)
     , Gen
@@ -70,21 +83,57 @@ import Test.QuickCheck
     , vectorOf
     )
 import Test.QuickCheck.Gen
-    ( Gen (..) )
+    ( Gen (..)
+    )
 import Test.QuickCheck.Random
-    ( mkQCGen )
+    ( mkQCGen
+    )
 
 import qualified Data.ByteString as BS
 import qualified Data.Text as T
-import qualified Test.Kupo.Data.Pattern.Fixture as Fixture
 
 genAddress :: Gen Address
 genAddress =
-    elements Fixture.addresses
+    frequency
+        [ (1, genBootstrapAddress)
+        , (10, genNonBootstrapAddress)
+        ]
+
+genBytes :: Int -> Gen ByteString
+genBytes n =
+    BS.pack <$> vector n
+
+genBootstrapAddress :: Gen Address
+genBootstrapAddress = elements
+    [ unsafeAddressFromBytes $ unsafeDecodeBase16
+        "82d818584283581c6b968ea45ead037c0f3788e578a79e3cb8840523f3ae230257\
+        \19c4d2a101581e581cca3e553c9c63c58c04a8a143c9988c3f0e15c550c69a48aa\
+        \3155c182001a88c8f168"
+    , unsafeAddressFromBytes $ unsafeDecodeBase16
+        "82d818582183581c20e9d7a0aeb05aa9d0ea4c4b97a2214cd31e7f855abab30e60\
+        \8afe19a0001a96a202b9"
+    ]
+
+genNonBootstrapAddress :: Gen Address
+genNonBootstrapAddress = oneof
+    [ unsafeAddressFromBytes . (addrType 0 <>) <$> genBytes (2*sz)
+    , unsafeAddressFromBytes . (addrType 1 <>) <$> genBytes (2*sz)
+    , unsafeAddressFromBytes . (addrType 2 <>) <$> genBytes (2*sz)
+    , unsafeAddressFromBytes . (addrType 3 <>) <$> genBytes (2*sz)
+    , pure $ unsafeAddressFromBytes $ unsafeDecodeBase16
+        "414e67b7e16ae36d61d349493315cd92eb5d8c430502694657811a2c8e8198bd431b03"
+    , pure $ unsafeAddressFromBytes $ unsafeDecodeBase16
+        "519f1d3c61a6fddb2e8fdc37b1b5dc066e96be87b881c60bce8e8d542f8198bd431b03"
+    , unsafeAddressFromBytes . (addrType 6 <>) <$> genBytes sz
+    , unsafeAddressFromBytes . (addrType 7 <>) <$> genBytes sz
+    ]
+  where
+    sz = digestSize @Blake2b_224
+    addrType n = BS.singleton (n `shiftL` 4)
 
 genAssetName :: Gen ByteString
 genAssetName = elements $
-    mempty : [ generateWith seed (BS.pack <$> chooseVector (1, nMax) arbitrary)
+    mempty : [ generateWith seed (choose (1, nMax) >>= genBytes)
              | seed <- [ 0 .. 10 ]
              ]
   where
@@ -100,7 +149,7 @@ genConnectionStatus =
 
 genDatumHash :: Gen DatumHash
 genDatumHash =
-    unsafeDatumHashFromBytes . BS.pack <$> vector (digestSize @Blake2b_256)
+    unsafeDatumHashFromBytes <$> genBytes (digestSize @Blake2b_256)
 
 genDatum :: Gen Datum
 genDatum = frequency
@@ -121,7 +170,7 @@ genScriptReference = frequency
 
 genScriptHash :: Gen ScriptHash
 genScriptHash =
-    unsafeScriptHashFromBytes . BS.pack <$> vector (digestSize @Blake2b_224)
+    unsafeScriptHashFromBytes <$> genBytes (digestSize @Blake2b_224)
 
 genPolicyId :: Gen PolicyId
 genPolicyId =
@@ -132,7 +181,7 @@ genBinaryData = elements plutusDataVectors
 
 genHeaderHash :: Gen (HeaderHash Block)
 genHeaderHash = do
-    unsafeHeaderHashFromBytes . BS.pack <$> vector (digestSize @Blake2b_256)
+    unsafeHeaderHashFromBytes <$> genBytes (digestSize @Blake2b_256)
 
 genHealth :: Gen Health
 genHealth = Health
@@ -165,8 +214,17 @@ genOutputReference =
     mkOutputReference <$> genTransactionId <*> genOutputIndex
 
 genPattern :: Gen Pattern
-genPattern = elements
-    [ p | (_, p, _) <- Fixture.patterns ]
+genPattern = oneof
+    [ MatchAny <$> elements [ IncludingBootstrap, OnlyShelley ]
+    , MatchExact <$> genAddress
+    , MatchPayment <$> genBytes sz
+    , MatchDelegation <$> genBytes sz
+    , MatchPaymentAndDelegation <$> genBytes sz <*> genBytes sz
+    , MatchTransactionId <$> genTransactionId
+    , MatchOutputReference <$> genOutputReference
+    ]
+  where
+    sz = digestSize @Blake2b_224
 
 genResult :: Gen Result
 genResult = Result
@@ -191,7 +249,7 @@ genSlotNo = do
 
 genTransactionId :: Gen TransactionId
 genTransactionId =
-    unsafeTransactionIdFromBytes . BS.pack <$> vector (digestSize @Blake2b_256)
+    unsafeTransactionIdFromBytes <$> genBytes (digestSize @Blake2b_256)
 
 -- | Generate values with non-negative quantities. When used for
 -- minting/burning, values' quantities can be negative. When used in outputs,
@@ -208,7 +266,7 @@ genOutputValue = do
   where
     genPolicyIdWithSmallEntropy :: Gen ByteString
     genPolicyIdWithSmallEntropy = elements
-        [ generateWith seed (BS.pack <$> vector (digestSize @Blake2b_224))
+        [ generateWith seed (genBytes (digestSize @Blake2b_224))
         | seed <- [ 0 .. 10 ]
         ]
 
@@ -230,6 +288,7 @@ genForcedRollback =
 -- Helpers
 --
 
+-- | Generate a arbitrary value with the given seed and generator.
 generateWith :: Int -> Gen a -> a
 generateWith seed (MkGen run) = run (mkQCGen seed) 42
 

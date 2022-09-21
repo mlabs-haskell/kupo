@@ -11,18 +11,33 @@ import Kupo.Prelude
 import Kupo.Data.Cardano
     ( AssetName
     , PolicyId
+    , TransactionId
     , assetNameToText
+    , mkOutputReference
     , policyIdToText
+    , transactionIdToText
     , unsafeAssetNameFromBytes
     )
 import Kupo.Data.Http.FilterMatchesBy
-    ( FilterMatchesBy (..), filterMatchesBy )
+    ( FilterMatchesBy (..)
+    , filterMatchesBy
+    )
 import Test.Hspec
-    ( Spec, context, parallel, shouldBe, specify )
+    ( Spec
+    , context
+    , parallel
+    , shouldBe
+    , specify
+    )
 import Test.Kupo.Data.Generators
-    ( genNonEmptyAssetName, genPolicyId, generateWith )
+    ( genNonEmptyAssetName
+    , genPolicyId
+    , genTransactionId
+    , generateWith
+    )
 import Test.QuickCheck
-    ( suchThat )
+    ( suchThat
+    )
 
 import qualified Data.ByteString as BS
 import qualified Network.HTTP.Types as Http
@@ -74,11 +89,53 @@ spec = parallel $ do
                     ]
                   , Nothing
                   )
+                , ( [ "transaction_id" .= transactionIdToText someTransactionId
+                    ]
+                  , Just (FilterByTransactionId someTransactionId)
+                  )
+                , ( [ "foo" .= "bar"
+                    , "transaction_id" .= transactionIdToText someTransactionId
+                    ]
+                  , Just (FilterByTransactionId someTransactionId)
+                  )
+                , ( [ "transaction_id" .= transactionIdToText someTransactionId
+                    , "output_index" .= "14"
+                    ]
+                  , Just (FilterByOutputReference (mkOutputReference someTransactionId 14))
+                  )
+                , ( [ "transaction_id" .= transactionIdToText someTransactionId
+                    , "transaction_id" .= transactionIdToText someOtherTransactionId
+                    ]
+                  , Nothing
+                  )
+                , ( [ "transaction_id" .= transactionIdToText someTransactionId
+                    , "output_index" .= "14"
+                    , "output_index" .= "42"
+                    ]
+                  , Nothing
+                  )
+                , ( [ "output_index" .= "14"
+                    ]
+                  , Nothing
+                  )
+                , ( [ "policy_id" .= policyIdToText somePolicyId
+                    , "transaction_id" .= transactionIdToText someTransactionId
+                    ]
+                  , Nothing
+                  )
                 ]
 
 --
 -- Fixtures
 --
+
+someTransactionId :: TransactionId
+someTransactionId =
+    generateWith 42 genTransactionId
+
+someOtherTransactionId :: TransactionId
+someOtherTransactionId =
+    generateWith 42 $ genTransactionId `suchThat` (/= someTransactionId)
 
 somePolicyId :: PolicyId
 somePolicyId =
@@ -102,6 +159,7 @@ someOtherAssetName =
 -- Helpers
 --
 
+infixr 8 .=
 (.=) :: ByteString -> Text -> (ByteString, Maybe ByteString)
 (.=) key val = (key, Just (encodeUtf8 val))
 

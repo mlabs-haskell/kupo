@@ -5,11 +5,11 @@
 /result
 /result-*
 
+## Cabal
+dist-newstyle
+
 ## Stack
 .stack-work/
-
-## Cabal
-dist-newstyle/
 
 ## IDEs
 .idea

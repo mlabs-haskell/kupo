@@ -52,11 +52,15 @@ module Kupo.Data.Database
 import Kupo.Prelude
 
 import Cardano.Binary
-    ( decodeFull, serialize )
+    ( decodeFull
+    , serialize
+    )
 import Data.Binary
-    ( Get )
+    ( Get
+    )
 import Data.Bits
-    ( Bits (..) )
+    ( Bits (..)
+    )
 import Kupo.Data.Cardano
     ( Blake2b_224
     , Crypto
@@ -66,11 +70,14 @@ import Kupo.Data.Cardano
     , datumHashToBytes
     , digestSize
     , hashFromBytes
+    , transactionIdToBytes
     )
 import Kupo.Data.Http.StatusFlag
-    ( StatusFlag (..) )
+    ( StatusFlag (..)
+    )
 import Ouroboros.Consensus.Block
-    ( ConvertRawHash (..) )
+    ( ConvertRawHash (..)
+    )
 
 import qualified Cardano.Ledger.Address as Ledger
 import qualified Cardano.Ledger.Alonzo.Data as Ledger
@@ -89,8 +96,8 @@ import qualified Kupo.Data.Pattern as App
 --
 
 data Checkpoint = Checkpoint
-    { checkpointHeaderHash :: ByteString
-    , checkpointSlotNo :: Word64
+    { checkpointHeaderHash :: !ByteString
+    , checkpointSlotNo :: !Word64
     } deriving (Show)
 
 pointFromRow
@@ -120,17 +127,17 @@ pointToRow = \case
 --
 
 data Input = Input
-    { outputReference :: ByteString
-    , address :: Text
-    , value :: ByteString
-    , datum :: Maybe BinaryData
-    , datumHash :: Maybe ByteString
-    , refScript :: Maybe ScriptReference
-    , refScriptHash :: Maybe ByteString
-    , createdAtSlotNo :: Word64
-    , createdAtHeaderHash :: ByteString
-    , spentAtSlotNo :: Maybe Word64
-    , spentAtHeaderHash :: Maybe ByteString
+    { outputReference :: !ByteString
+    , address :: !Text
+    , value :: !ByteString
+    , datum :: !(Maybe BinaryData)
+    , datumHash :: !(Maybe ByteString)
+    , refScript :: !(Maybe ScriptReference)
+    , refScriptHash :: !(Maybe ByteString)
+    , createdAtSlotNo :: !Word64
+    , createdAtHeaderHash :: !ByteString
+    , spentAtSlotNo :: !(Maybe Word64)
+    , spentAtHeaderHash :: !(Maybe ByteString)
     } deriving (Show)
 
 resultFromRow
@@ -208,8 +215,8 @@ patternFromRow p =
 --
 
 data BinaryData = BinaryData
-    { binaryDataHash :: ByteString
-    , binaryData :: ByteString
+    { binaryDataHash :: !ByteString
+    , binaryData :: !ByteString
     } deriving (Show)
 
 datumFromRow
@@ -265,8 +272,8 @@ binaryDataFromRow =
 --
 
 data ScriptReference = ScriptReference
-    { scriptHash :: ByteString
-    , script :: ByteString
+    { scriptHash :: !ByteString
+    , script :: !ByteString
     } deriving (Show)
 
 scriptHashToRow
@@ -521,17 +528,34 @@ patternToSql
     -> Text
 patternToSql = \case
     App.MatchAny App.IncludingBootstrap ->
-        "LIKE '%'"
+        "address LIKE '%'"
     App.MatchAny App.OnlyShelley ->
-        "NOT LIKE '00%'"
+        "address NOT LIKE '00%'"
     App.MatchExact addr ->
-        "= '" <> addressToRow addr <> "'"
+        "address = '" <> addressToRow addr <> "'"
     App.MatchPayment payment ->
-        "LIKE '%" <> encodeBase16 payment <> "'"
+        "address LIKE '%" <> encodeBase16 payment <> "'"
     App.MatchDelegation delegation ->
-        "LIKE '01" <> encodeBase16 delegation <> "%'"
+        "address LIKE '01" <> encodeBase16 delegation <> "%'"
     App.MatchPaymentAndDelegation payment delegation ->
-        "LIKE '01" <> encodeBase16 delegation <> "__" <> encodeBase16 payment <> "'"
+        "address LIKE '01" <> encodeBase16 delegation <> "__" <> encodeBase16 payment <> "'"
+    App.MatchOutputReference (encodeBase16 . serialize' -> str) ->
+        "output_reference = x'" <> str <> "'"
+    App.MatchTransactionId (encodeBase16 . transactionIdToBytes -> txId) ->
+        unwords
+        [ "(    output_reference >= x'825820" <> txId <> "00'\
+          \ AND output_reference <= x'825820" <> txId <> "17')"
+        , "OR"
+        , "(    output_reference >= x'825820" <> txId <> "1818'\
+          \ AND output_reference <= x'825820" <> txId <> "18ff')"
+        , "OR"
+        , "(    output_reference >= x'825820" <> txId <> "190100'\
+          \ AND output_reference <= x'825820" <> txId <> "190100')"
+        ]
+    App.MatchPolicyId{} ->
+        "address LIKE '%'"
+    App.MatchAssetId{} ->
+        "address LIKE '%'"
 
 applyStatusFlag :: StatusFlag -> Text -> Text
 applyStatusFlag = \case

@@ -2,6 +2,7 @@
 --  License, v. 2.0. If a copy of the MPL was not distributed with this
 --  file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
+{-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE RecordWildCards #-}
@@ -16,12 +17,12 @@ module Kupo.Data.Pattern
     , included
     , patternFromText
     , patternToText
-    , patternFromPath
     , wildcard
 
       -- * Matching
-    , matching
     , Codecs (..)
+    , Match (..)
+    , matching
     , matchBlock
 
       -- * Result
@@ -32,9 +33,11 @@ module Kupo.Data.Pattern
 import Kupo.Prelude
 
 import Codec.Binary.Bech32.TH
-    ( humanReadablePart )
+    ( humanReadablePart
+    )
 import Kupo.Data.Cardano
     ( Address
+    , AssetId
     , BinaryData
     , Blake2b_224
     , Blake2b_256
@@ -45,14 +48,18 @@ import Kupo.Data.Cardano
     , Output
     , OutputReference
     , Point
+    , PolicyId
     , Script
     , ScriptHash
     , ScriptReference (..)
     , SlotNo
+    , TransactionId
     , Value
     , addressFromBytes
     , addressToBytes
     , addressToJson
+    , assetNameFromText
+    , assetNameToText
     , datumHashToJson
     , digest
     , digestSize
@@ -65,15 +72,24 @@ import Kupo.Data.Cardano
     , getScript
     , getTransactionId
     , getValue
+    , hasAssetId
+    , hasPolicyId
     , hashDatum
     , hashScriptReference
     , headerHashToJson
     , isBootstrap
+    , mkOutputReference
     , mkScriptReference
+    , outputIndexFromText
     , outputIndexToJson
+    , outputReferenceToText
+    , policyIdFromText
+    , policyIdToText
     , scriptHashToJson
     , slotNoToJson
+    , transactionIdFromText
     , transactionIdToJson
+    , transactionIdToText
     , unsafeGetPointHeaderHash
     , valueToJson
     )
@@ -86,27 +102,29 @@ import qualified Data.Set as Set
 import qualified Data.Text as T
 
 data Pattern
-    = MatchAny MatchBootstrap
-    | MatchExact Address
-    | MatchPayment ByteString
-    | MatchDelegation ByteString
-    | MatchPaymentAndDelegation ByteString ByteString
+    = MatchAny !MatchBootstrap
+    | MatchExact !Address
+    | MatchPayment !ByteString
+    | MatchDelegation !ByteString
+    | MatchPaymentAndDelegation !ByteString !ByteString
+    | MatchTransactionId !TransactionId
+    | MatchOutputReference !OutputReference
+    | MatchPolicyId !PolicyId
+    | MatchAssetId !AssetId
     deriving (Generic, Eq, Ord, Show)
 
 -- | Checks whether a given pattern overlaps with a list of other patterns. The
 -- inclusion is a deep inclusion such that for instance, (MatchPayment "a") is
 -- considered included in [MatchAny OnlyShelley].
-overlaps :: Pattern -> [Pattern] -> Bool
-overlaps p = \case
-    [] -> False
-    p':rest ->
-        overlapTwo (p, p') || overlapTwo (p', p) || overlaps p rest
+overlaps :: Pattern -> Set Pattern -> Bool
+overlaps p =
+    Set.foldr (\p' rest -> rest || overlapTwo (p, p') || overlapTwo (p', p)) False
   where
     overlapTwo = \case
         (MatchAny{}, _) ->
             True
         (MatchExact addr, p') ->
-            isJust (matching addr p')
+            p' `matchingAddress` addr
         (MatchPayment a, MatchPayment a') ->
             a == a'
         (MatchPayment a, MatchPaymentAndDelegation a' _) ->
@@ -117,9 +135,20 @@ overlaps p = \case
             b == b'
         (MatchPaymentAndDelegation a b, MatchPaymentAndDelegation a' b') ->
             a == a' || b == b'
-        _ ->
+        (MatchOutputReference a, MatchOutputReference a') ->
+            a == a'
+        (MatchOutputReference a, MatchTransactionId a') ->
+            getTransactionId a == a'
+        (MatchTransactionId a, MatchTransactionId a') ->
+            a == a'
+        (MatchPolicyId a, MatchPolicyId a') ->
+            a == a'
+        (MatchAssetId a, MatchAssetId a') ->
+            a == a'
+        (MatchAssetId a, MatchPolicyId a') ->
+            fst a == a'
+        _nonOverlappingPatterns ->
             False
-
 
 -- | Checks whether a pattern x fully includes pattern y.
 -- If any result matched by y is also matched by x, then the function returns
@@ -127,8 +156,8 @@ overlaps p = \case
 -- x may match more results than y.
 includes :: Pattern -> Pattern -> Bool
 includes x y = case (x, y) of
-    (p, MatchExact addr') ->
-        isJust (matching addr' p)
+    (p, MatchExact addr) ->
+        p `matchingAddress` addr
     (MatchAny IncludingBootstrap, _) ->
         True
     (MatchAny OnlyShelley, _) ->
@@ -143,28 +172,23 @@ includes x y = case (x, y) of
         b == b'
     (MatchPaymentAndDelegation a b, MatchPaymentAndDelegation a' b') ->
         a == a' && b == b'
-    _ ->
+    (MatchOutputReference a, MatchOutputReference a') ->
+        a == a'
+    (MatchOutputReference a, MatchTransactionId a') ->
+        getTransactionId a == a'
+    (MatchTransactionId a, MatchTransactionId a') ->
+        a == a'
+    _nonIncludedPatterns ->
         False
 
 -- | All patterns in the list that are fully covering the given pattern
 -- according to the definition given by 'includes'
-included :: Pattern -> [Pattern] -> [Pattern]
-included p = filter (`includes` p)
+included :: Pattern -> Set Pattern -> Set Pattern
+included p = Set.filter (`includes` p)
 
 wildcard :: Text
 wildcard = "*"
 {-# INLINEABLE wildcard #-}
-
-patternFromPath :: [Text] -> Maybe Text
-patternFromPath = \case
-    [] ->
-        Just wildcard
-    [arg0] ->
-        Just arg0
-    [arg0, arg1] ->
-        Just (arg0 <> "/" <> arg1)
-    _ ->
-        Nothing
 
 patternToText :: Pattern -> Text
 patternToText = \case
@@ -180,10 +204,23 @@ patternToText = \case
         wildcard <> "/" <> encodeBase16 bytes
     MatchPaymentAndDelegation a b ->
         encodeBase16 a <> "/" <> encodeBase16 b
+    MatchTransactionId txId ->
+        wildcard <> "@" <> transactionIdToText txId
+    MatchOutputReference outRef ->
+        outputReferenceToText outRef
+    MatchPolicyId policyId ->
+        policyIdToText policyId <> "." <> wildcard
+    MatchAssetId (policyId, name) ->
+        policyIdToText policyId <> "." <> assetNameToText name
 
 patternFromText :: Text -> Maybe Pattern
-patternFromText txt =
-    readerAny <|> readerExact <|> readerPaymentOrDelegation
+patternFromText txt = asum
+    [ readerAny
+    , readerExact
+    , readerPaymentOrDelegation
+    , readerOutputReference
+    , readerAssetId
+    ]
   where
     readerAny = MatchAny IncludingBootstrap
         <$ guard (txt == wildcard)
@@ -224,7 +261,7 @@ patternFromText txt =
                         MatchPaymentAndDelegation
                             <$> readerCredential payment
                             <*> readerCredential delegation
-            _ ->
+            _unexpectedSplit ->
                 empty
 
     -- NOTE: byte strings are interpreted either as verification key or
@@ -260,6 +297,30 @@ patternFromText txt =
                     empty
         )
 
+    readerOutputReference = do
+        case T.splitOn "@" txt of
+            [star, txId] | star == wildcard ->
+                MatchTransactionId <$> transactionIdFromText txId
+            [ix, txId] -> do
+                outRef <- mkOutputReference
+                    <$> transactionIdFromText txId
+                    <*> outputIndexFromText ix
+                pure (MatchOutputReference outRef)
+            _unexpectedSplit ->
+                Nothing
+
+    readerAssetId = do
+        case T.splitOn "." txt of
+            [policyId, star] | star == wildcard ->
+                MatchPolicyId <$> policyIdFromText policyId
+            [policyId, name] -> do
+                assetId <- (,)
+                    <$> policyIdFromText policyId
+                    <*> assetNameFromText name
+                pure (MatchAssetId assetId)
+            _unexpectedSplit ->
+                Nothing
+
     readerBase16 str action = do
         bytes <- either (const Nothing) Just . decodeBase16 . encodeUtf8 $ str
         action bytes
@@ -273,19 +334,39 @@ patternFromText txt =
         bytes <- Bech32.dataPartToBytes dataPart
         action bytes hrp
 
-matching :: (Monad f, Alternative f) => Address -> Pattern -> f ()
-matching addr = \case
+matching :: (Alternative f) => OutputReference -> Output -> Pattern -> f ()
+matching outRef out = \case
+    MatchTransactionId txId ->
+        guard (txId == getTransactionId outRef)
+    MatchOutputReference outRef' ->
+        guard (outRef == outRef')
+    MatchPolicyId policyId ->
+        guard (hasPolicyId (getValue out) policyId)
+    MatchAssetId assetId ->
+        guard (hasAssetId (getValue out) assetId)
+    other ->
+        guard (matchingAddress other (getAddress out))
+
+matchingAddress :: Pattern -> Address -> Bool
+matchingAddress = \case
     MatchAny (MatchBootstrap matchBootstrap) ->
-        guard (not (isBootstrap addr) || matchBootstrap)
+        \addr ->
+            not (isBootstrap addr) || matchBootstrap
     MatchExact addr' ->
-        guard (addr' == addr)
+        (== addr')
     MatchPayment payment ->
-        guard (Just payment == getPaymentPartBytes addr)
+        \addr ->
+            Just payment == getPaymentPartBytes addr
     MatchDelegation delegation ->
-        guard (Just delegation == getDelegationPartBytes addr)
+        \addr ->
+            Just delegation == getDelegationPartBytes addr
     MatchPaymentAndDelegation payment delegation -> do
-        matching addr (MatchPayment payment)
-        matching addr (MatchDelegation delegation)
+        \addr ->
+            Just payment == getPaymentPartBytes addr
+            &&
+            Just delegation == getDelegationPartBytes addr
+    _nonAddressPattern ->
+        const False
 
 data MatchBootstrap
     = MatchBootstrap Bool
@@ -304,13 +385,13 @@ pattern OnlyShelley <- MatchBootstrap False
 {-# COMPLETE OnlyShelley, IncludingBootstrap #-}
 
 data Result = Result
-    { outputReference :: OutputReference
-    , address :: Address
-    , value :: Value
-    , datum :: Datum
-    , scriptReference :: ScriptReference
-    , createdAt :: Point
-    , spentAt :: Maybe Point
+    { outputReference :: !OutputReference
+    , address :: !Address
+    , value :: !Value
+    , datum :: !Datum
+    , scriptReference :: !ScriptReference
+    , createdAt :: !Point
+    , spentAt :: !(Maybe Point)
     } deriving (Show, Eq)
 
 resultToJson
@@ -354,12 +435,32 @@ resultToJson Result{..} = Json.pairs $ mconcat
 -- on-the-fly as we traverse the structure, rather than traversing all results a
 -- second time.
 data Codecs result slotNo input bin script = Codecs
-    { toResult :: Result -> result
-    , toSlotNo :: SlotNo -> slotNo
-    , toInput :: Input -> input
-    , toBinaryData :: DatumHash -> BinaryData -> bin
-    , toScript :: ScriptHash -> Script -> script
+    { toResult :: !(Result -> result)
+    , toSlotNo :: !(SlotNo -> slotNo)
+    , toInput :: !(Input -> input)
+    , toBinaryData :: !(DatumHash -> BinaryData -> bin)
+    , toScript :: !(ScriptHash -> Script -> script)
     }
+
+-- | A higher-level record to represent the aggregation of matched results.
+data Match result slotNo input bin script = Match
+    { consumed :: !(Map slotNo (Set input))
+    , produced :: ![result]
+    , datums :: ![bin]
+    , scripts :: ![script]
+    }
+
+instance Ord slotNo => Semigroup (Match result slotNo input bin script) where
+    a <> b = Match
+        { consumed = consumed a <> consumed b
+        , produced = produced a <> produced b
+        , datums = datums a <> datums b
+        , scripts = scripts a <> scripts b
+        }
+
+instance Ord slotNo => Monoid (Match result slotNo input bin script) where
+    mempty = Match mempty mempty mempty mempty
+
 
 -- | Match all outputs in transactions from a block that match any of the given
 -- pattern.
@@ -368,43 +469,51 @@ data Codecs result slotNo input bin script = Codecs
 -- multiple patterns. This is to facilitate building an index of matches to
 -- results.
 matchBlock
-    :: forall block result slotNo input bin scripts.
+    :: forall block result slotNo input bin script.
         ( IsBlock block
         , Ord input
         , Ord slotNo
         )
-    => Codecs result slotNo input bin scripts
-    -> [Pattern]
+    => Codecs result slotNo input bin script
+    -> Set Pattern
     -> block
-    -> (Map slotNo (Set input), [result], [bin], [scripts])
+    -> Match result slotNo input bin script
 matchBlock Codecs{..} patterns blk =
-    let pt = getPoint blk in foldBlock (fn pt) (mempty, mempty, mempty, mempty) blk
+    let pt = getPoint blk in foldBlock (fn pt) (Match mempty mempty mempty mempty) blk
   where
     fn
         :: Point
         -> BlockBody block
-        -> (Map slotNo (Set input), [result], [bin], [scripts])
-        -> (Map slotNo (Set input), [result], [bin], [scripts])
-    fn pt tx (consumed, produced, datums, scripts) =
-        ( Map.alter
-            (\st -> Just (Set.foldr (Set.insert . toInput) (fromMaybe mempty st) (spentInputs @block tx)))
+        -> Match result slotNo input bin script
+        -> Match result slotNo input bin script
+    fn pt tx Match{consumed, produced, datums, scripts} = Match
+        { consumed = Map.alter
+            (\st -> Just $ Set.foldr
+                (Set.insert . toInput)
+                (fromMaybe mempty st)
+                (spentInputs @block tx)
+            )
             (toSlotNo (getPointSlotNo pt))
             consumed
 
-        , matched ++ produced
+        , produced =
+            matched ++ produced
 
-        , Map.foldrWithKey
+        , datums = Map.foldrWithKey
             (\k v accum -> toBinaryData k v : accum)
             datums
             (witnessedDatums @block tx)
 
-        , Map.foldrWithKey
+        , scripts = Map.foldrWithKey
             (\k v accum -> toScript k v : accum)
             scripts
             (witnessedScripts @block tx)
-        )
+        }
       where
-        matched = concatMap (flip (mapMaybeOutputs @block) tx . match pt) patterns
+        matched =
+            concatMap
+                (flip (mapMaybeOutputs @block) tx . match pt)
+                patterns
 
     match
         :: Point
@@ -412,14 +521,14 @@ matchBlock Codecs{..} patterns blk =
         -> OutputReference
         -> Output
         -> Maybe result
-    match pt m outputReference out = do
-        getAddress out `matching` m
+    match pt m outputReference output = do
+        matching outputReference output m
         pure $ toResult Result
             { outputReference
-            , address = getAddress out
-            , value = getValue out
-            , datum = getDatum out
-            , scriptReference = mkScriptReference (getScript out)
+            , address = getAddress output
+            , value = getValue output
+            , datum = getDatum output
+            , scriptReference = mkScriptReference (getScript output)
             , createdAt = pt
             , spentAt = Nothing
             }
