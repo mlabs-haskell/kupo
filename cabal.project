@@ -51,10 +51,10 @@ constraints:
 
 source-repository-package
   type: git
-  location: https://github.com/CardanoSolutions/direct-sqlite
+  location: https://github.com/CardanoSolutions/direct-sqlite.git
   tag: 82c5ab46715ecd51901256144f1411b480e2cb8b
 
 source-repository-package
   type: git
-  location: https://github.com/CardanoSolutions/text-ansi
+  location: https://github.com/CardanoSolutions/text-ansi.git
   tag: dd81fe6b30e78e95589b29fd1b7be1c18bd6e700
